@@ -379,7 +379,7 @@ with st.sidebar:
         [
             "🚨 Report Problem",
             "📊 Community Dashboard",
-            "🧠 How the AI Works"
+            
         ]
     )
 
@@ -717,82 +717,3 @@ elif page == "📊 Community Dashboard":
         )
 
 
-# ============================================================
-# AI EXPLANATION
-# ============================================================
-
-elif page == "🧠 How the AI Works":
-
-    st.title("🧠 How CivicPulse AI Works")
-
-    st.write(
-        "CivicPulse uses machine learning and text similarity "
-        "to turn individual citizen observations into useful "
-        "community-level signals."
-    )
-
-    st.divider()
-
-    st.header("1️⃣ AI Category Detection")
-
-    st.write(
-        "The system converts the user's description into "
-        "numerical text features using TF-IDF."
-    )
-
-    st.code(
-        "Problem description\n"
-        "       ↓\n"
-        "TF-IDF text representation\n"
-        "       ↓\n"
-        "Logistic Regression\n"
-        "       ↓\n"
-        "Predicted category"
-    )
-
-    st.divider()
-
-    st.header("2️⃣ Risk Scoring")
-
-    st.write(
-        "The system looks for risk indicators such as "
-        "danger, accident, flooding, sewage, unsafe and "
-        "other signals."
-    )
-
-    st.code(
-        "Risk Score = Base Risk + Risk Indicators + Category Risk"
-    )
-
-    st.divider()
-
-    st.header("3️⃣ Similar Problem Detection")
-
-    st.write(
-        "TF-IDF vectors and cosine similarity are used to "
-        "compare a new report with previous reports."
-    )
-
-    st.code(
-        "New Report\n"
-        "     ↓\n"
-        "TF-IDF Vector\n"
-        "     ↓\n"
-        "Cosine Similarity\n"
-        "     ↓\n"
-        "Similar Reports"
-    )
-
-    st.divider()
-
-    st.header("4️⃣ Emerging Hotspot Detection")
-
-    st.write(
-        "When several similar reports appear, CivicPulse "
-        "flags the situation as a potential emerging hotspot."
-    )
-
-    st.success(
-        "The goal is not simply to collect complaints. "
-        "The goal is to detect patterns."
-    )
