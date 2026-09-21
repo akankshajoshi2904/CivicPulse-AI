@@ -3,756 +3,730 @@ import pandas as pd
 import sqlite3
 import re
 from datetime import datetime
-from pathlib import Path
-
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
 # ============================================================
 # CIVICPULSE AI
-# AI-powered civic problem detection and community intelligence
+# AI-powered early detection of local problems
 # ============================================================
+
+
+# -------------------- PAGE SETTINGS --------------------
 
 st.set_page_config(
     page_title="CivicPulse AI",
-    page_icon="🏙️",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    page_icon="🌆",
+    layout="wide"
 )
 
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "civicpulse.db"
-TRAINING_PATH = BASE_DIR / "training_data.csv"
-EVALUATION_PATH = BASE_DIR / "evaluation_data.csv"
 
-CATEGORIES = [
-    "Garbage / Waste",
-    "Public Safety",
-    "Road / Pothole",
-    "Streetlight",
-    "Traffic",
-    "Water Supply",
-    "Waterlogging / Drainage",
-]
+# -------------------- DATABASE --------------------
 
-# ------------------------------------------------------------
-# Styling
-# ------------------------------------------------------------
-st.markdown(
-    """
-    <style>
-    .block-container {padding-top: 2rem; padding-bottom: 3rem;}
-    .hero {
-        padding: 1.2rem 1.4rem;
-        border-radius: 16px;
-        background: linear-gradient(135deg, #eef4ff, #f7f9fc);
-        border: 1px solid #dfe7f3;
-        margin-bottom: 1.5rem;
-    }
-    .hero h1 {margin-bottom: .2rem;}
-    .small-muted {color: #6b7280; font-size: .9rem;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+def create_database():
 
-# ------------------------------------------------------------
-# Data / database helpers
-# ------------------------------------------------------------
-def get_connection():
-    return sqlite3.connect(DB_PATH)
+    connection = sqlite3.connect("civicpulse.db")
 
-
-def initialize_database():
-    connection = get_connection()
     cursor = connection.cursor()
-    cursor.execute(
-        """
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            problem TEXT NOT NULL,
-            location TEXT NOT NULL,
-            category TEXT NOT NULL,
-            severity TEXT NOT NULL,
-            risk_score INTEGER NOT NULL,
-            confidence REAL,
-            created_at TEXT NOT NULL
+            problem TEXT,
+            location TEXT,
+            category TEXT,
+            severity TEXT,
+            risk_score INTEGER,
+            created_at TEXT
         )
-        """
-    )
+    """)
+
     connection.commit()
     connection.close()
 
 
-def load_reports():
-    connection = get_connection()
-    reports = pd.read_sql_query(
-        "SELECT * FROM reports ORDER BY id DESC",
-        connection,
-    )
-    connection.close()
-    return reports
+create_database()
 
 
-initialize_database()
 
-# ------------------------------------------------------------
-# Training
-# ------------------------------------------------------------
-@st.cache_resource
-def train_model():
-    if not TRAINING_PATH.exists():
-        raise FileNotFoundError(
-            f"training_data.csv was not found at {TRAINING_PATH}"
-        )
+# -------------------- TRAINING DATA --------------------
 
-    training_data = pd.read_csv(TRAINING_PATH)
+training_data = pd.read_csv("training_data.csv")
 
-    required_columns = {"problem", "category"}
-    if not required_columns.issubset(training_data.columns):
-        raise ValueError(
-            "training_data.csv must contain 'problem' and 'category' columns."
-        )
+training_text = training_data["problem"].astype(str).tolist()
+training_labels = training_data["category"].astype(str).tolist()
+# -------------------- TRAIN / TEST SPLIT --------------------
 
-    training_data = training_data.dropna(subset=["problem", "category"]).copy()
-    training_data["problem"] = training_data["problem"].astype(str)
-    training_data["category"] = training_data["category"].astype(str)
-
-    vectorizer = TfidfVectorizer(
-        lowercase=True,
-        stop_words="english",
-        ngram_range=(1, 2),
-        min_df=1,
-        sublinear_tf=True,
-    )
-
-    X = vectorizer.fit_transform(training_data["problem"])
-    y = training_data["category"]
-
-    model = LogisticRegression(
-        max_iter=2000,
-        class_weight="balanced",
-        random_state=42,
-    )
-    model.fit(X, y)
-
-    return vectorizer, model, training_data
+X_train_text, X_test_text, y_train, y_test = train_test_split(
+    training_text,
+    training_labels,
+    test_size=0.20,
+    random_state=42,
+    stratify=training_labels
+)
 
 
-vectorizer, model, training_data = train_model()
+# -------------------- TF-IDF --------------------
 
+vectorizer = TfidfVectorizer(
+    lowercase=True,
+    stop_words="english",
+    ngram_range=(1, 2)
+)
+
+X_train = vectorizer.fit_transform(X_train_text)
+X_test = vectorizer.transform(X_test_text)
+
+
+# -------------------- TRAIN AI MODEL --------------------
+
+model = LogisticRegression(
+    max_iter=1000
+)
+
+model.fit(X_train, y_train)
+
+
+# -------------------- MODEL EVALUATION --------------------
+
+test_predictions = model.predict(X_test)
+
+model_accuracy = accuracy_score(
+    y_test,
+    test_predictions
+)
+
+model_report = classification_report(
+    y_test,
+    test_predictions,
+    output_dict=True,
+    zero_division=0
+)
+
+model_confusion_matrix = confusion_matrix(
+    y_test,
+    test_predictions,
+    labels=model.classes_
+)
+
+
+# -------------------- AI CATEGORY PREDICTION --------------------
 
 def predict_category(problem):
-    transformed = vectorizer.transform([problem])
-    probabilities = model.predict_proba(transformed)[0]
-    index = probabilities.argmax()
-    category = model.classes_[index]
-    confidence = float(probabilities[index] * 100)
-    return category, confidence
+
+    transformed_problem = vectorizer.transform([problem])
+
+    prediction = model.predict(transformed_problem)[0]
+
+    probabilities = model.predict_proba(transformed_problem)[0]
+
+    confidence = max(probabilities) * 100
+
+    return prediction, confidence
 
 
-# ------------------------------------------------------------
-# Risk / severity
-# ------------------------------------------------------------
-HIGH_RISK_WORDS = [
-    "accident",
-    "injury",
-    "injured",
-    "danger",
-    "dangerous",
-    "fire",
-    "collision",
-    "crash",
-    "electrocution",
-    "sewage",
-    "flood",
-    "flooded",
-    "overflowing",
-    "blocked",
-    "collapse",
-    "collapsed",
-]
+# -------------------- RISK CALCULATION --------------------
 
-MEDIUM_RISK_WORDS = [
-    "deep",
-    "large",
-    "major",
-    "severe",
-    "broken",
-    "unsafe",
-    "dark",
-    "slow",
-    "congestion",
-    "waste",
-    "leak",
-    "crack",
-    "damaged",
-    "piling",
-    "standing water",
-]
+def calculate_risk(problem, category):
 
-
-def calculate_risk(problem, category, confidence):
     text = problem.lower()
-    score = 20
 
-    score += sum(12 for word in HIGH_RISK_WORDS if word in text)
-    score += sum(5 for word in MEDIUM_RISK_WORDS if word in text)
+    risk = 30
 
-    category_bonus = {
-        "Public Safety": 12,
-        "Waterlogging / Drainage": 8,
-        "Road / Pothole": 6,
-        "Traffic": 5,
-        "Streetlight": 3,
-        "Water Supply": 3,
-        "Garbage / Waste": 2,
-    }
+    high_risk_words = [
+        "accident",
+        "danger",
+        "dangerous",
+        "injury",
+        "flood",
+        "flooded",
+        "sewage",
+        "fire",
+        "crime",
+        "unsafe",
+        "emergency",
+        "blocked",
+        "overflowing"
+    ]
 
-    score += category_bonus.get(category, 0)
+    medium_risk_words = [
+        "broken",
+        "deep",
+        "large",
+        "huge",
+        "severe",
+        "heavy",
+        "major",
+        "bad"
+    ]
 
-    if confidence < 45:
-        score += 3
+    for word in high_risk_words:
+        if word in text:
+            risk += 12
 
-    return min(100, int(score))
+    for word in medium_risk_words:
+        if word in text:
+            risk += 6
+
+    if category in ["Public Safety", "Waterlogging / Drainage"]:
+        risk += 8
+
+    risk = min(risk, 100)
+
+    if risk >= 75:
+        severity = "Critical"
+    elif risk >= 55:
+        severity = "High"
+    elif risk >= 40:
+        severity = "Medium"
+    else:
+        severity = "Low"
+
+    return risk, severity
 
 
-def severity_from_risk(score):
-    if score >= 75:
-        return "Critical"
-    if score >= 55:
-        return "High"
-    if score >= 35:
-        return "Medium"
-    return "Low"
+# -------------------- SIMILARITY SEARCH --------------------
 
+def find_similar_reports(problem):
 
-# ------------------------------------------------------------
-# Similarity / hotspot
-# ------------------------------------------------------------
-def find_similar_reports(problem, threshold=0.20):
-    reports = load_reports()
+    connection = sqlite3.connect("civicpulse.db")
+
+    reports = pd.read_sql_query(
+        "SELECT * FROM reports ORDER BY id DESC",
+        connection
+    )
+
+    connection.close()
 
     if reports.empty:
         return reports
 
-    corpus = reports["problem"].astype(str).tolist()
+    all_text = reports["problem"].tolist()
 
     similarity_vectorizer = TfidfVectorizer(
         lowercase=True,
-        stop_words="english",
-        ngram_range=(1, 2),
+        stop_words="english"
     )
 
-    matrix = similarity_vectorizer.fit_transform(corpus + [problem])
-    scores = cosine_similarity(matrix[-1], matrix[:-1])[0]
+    matrix = similarity_vectorizer.fit_transform(
+        all_text + [problem]
+    )
 
-    reports["similarity"] = scores
+    similarity_scores = cosine_similarity(
+        matrix[-1],
+        matrix[:-1]
+    )[0]
+
+    reports["similarity"] = similarity_scores
 
     similar = reports[
-        reports["similarity"] >= threshold
-    ].sort_values("similarity", ascending=False)
+        reports["similarity"] >= 0.20
+    ].sort_values(
+        "similarity",
+        ascending=False
+    )
 
     return similar.head(5)
 
 
-def save_report(problem, location, category, severity, risk_score, confidence):
-    connection = get_connection()
-    connection.execute(
+# -------------------- SAVE REPORT --------------------
+
+def save_report(problem, location, category, severity, risk_score):
+
+    connection = sqlite3.connect("civicpulse.db")
+
+    cursor = connection.cursor()
+
+    cursor.execute(
         """
         INSERT INTO reports
-        (problem, location, category, severity, risk_score, confidence, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (problem, location, category, severity, risk_score, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
             problem,
             location,
             category,
             severity,
-            int(risk_score),
-            float(confidence),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        ),
+            risk_score,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
     )
+
     connection.commit()
     connection.close()
 
 
-# ------------------------------------------------------------
-# Evaluation
-# ------------------------------------------------------------
-@st.cache_data
-def evaluate_model():
-    if not EVALUATION_PATH.exists():
-        return None
+# -------------------- LOAD REPORTS --------------------
 
-    evaluation_data = pd.read_csv(EVALUATION_PATH)
-    required_columns = {"problem", "category"}
+def load_reports():
 
-    if not required_columns.issubset(evaluation_data.columns):
-        return None
+    connection = sqlite3.connect("civicpulse.db")
 
-    evaluation_data = evaluation_data.dropna(
-        subset=["problem", "category"]
-    ).copy()
-
-    X_eval = vectorizer.transform(
-        evaluation_data["problem"].astype(str)
-    )
-    y_true = evaluation_data["category"].astype(str)
-    y_pred = model.predict(X_eval)
-
-    accuracy = accuracy_score(y_true, y_pred)
-
-    precision, recall, f1, support = precision_recall_fscore_support(
-        y_true,
-        y_pred,
-        labels=CATEGORIES,
-        zero_division=0,
+    reports = pd.read_sql_query(
+        "SELECT * FROM reports ORDER BY id DESC",
+        connection
     )
 
-    matrix = confusion_matrix(
-        y_true,
-        y_pred,
-        labels=CATEGORIES,
-    )
+    connection.close()
 
-    metrics_df = pd.DataFrame(
-        {
-            "Category": CATEGORIES,
-            "Precision": precision,
-            "Recall": recall,
-            "F1-Score": f1,
-            "Support": support,
-        }
-    )
+    return reports
 
+
+
+# ============================================================
+# USER INTERFACE
+# ============================================================
+
+
+def normalize_text(value):
+    return str(value).strip().lower()
+
+
+def get_priority_label(severity):
     return {
-        "accuracy": accuracy,
-        "samples": len(evaluation_data),
-        "metrics": metrics_df,
-        "matrix": matrix,
-        "predictions": pd.DataFrame(
-            {
-                "problem": evaluation_data["problem"],
-                "actual": y_true,
-                "predicted": y_pred,
-            }
-        ),
+        "Critical": "Urgent",
+        "High": "High",
+        "Medium": "Medium",
+        "Low": "Normal"
+    }.get(severity, severity)
+
+
+def get_priority_reason(category, severity):
+    category_reasons = {
+        "Road / Pothole": "The report describes a road condition that may affect vehicles or pedestrians.",
+        "Waterlogging / Drainage": "The report describes water or drainage problems that may affect movement and safety.",
+        "Public Safety": "The report contains a public-safety concern that may need attention.",
+        "Traffic": "The report describes a traffic-related problem that may affect daily travel.",
+        "Streetlight": "The report describes a lighting problem that may reduce visibility in the area.",
+        "Garbage / Waste": "The report describes a waste-related problem that may affect the local area.",
+        "Water Supply": "The report describes a water-supply problem affecting the community."
     }
 
+    base = category_reasons.get(
+        category,
+        "The report contains information about a local community problem."
+    )
 
-evaluation = evaluate_model()
+    if severity in ["Critical", "High"]:
+        return base + " The report has been marked for higher attention."
+    if severity == "Medium":
+        return base + " The issue may need monitoring if more reports appear."
+    return base + " More community reports can help show whether the issue is recurring."
 
-# ------------------------------------------------------------
-# Sidebar
-# ------------------------------------------------------------
+
+def get_area_signals(reports):
+    if reports.empty:
+        return pd.DataFrame(columns=["location", "category", "reports"])
+
+    signals = reports.copy()
+    signals["location_key"] = signals["location"].astype(str).str.strip().str.lower()
+
+    grouped = (
+        signals.groupby(["location_key", "category"], as_index=False)
+        .agg(
+            location=("location", "first"),
+            reports=("id", "count")
+        )
+    )
+
+    return (
+        grouped[grouped["reports"] >= 2]
+        .sort_values(["reports", "location"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+
+
+# -------------------- SIDEBAR --------------------
+
 with st.sidebar:
-    st.title("🏙️ CivicPulse AI")
-    st.write("AI-powered early detection of emerging local problems.")
+
+    st.title("🌆 CivicPulse AI")
+
+    st.write(
+        "Report local problems.\n\n"
+        "Understand recurring issues.\n\n"
+        "Help your community spot problems early."
+    )
+
     st.divider()
 
     page = st.radio(
-        "Navigation",
-        ["🚨 Report Problem", "📊 Community Dashboard"],
+        "Go to",
+        [
+            "🚨 Report Problem",
+            "📊 Community Dashboard",
+        ]
+    )
+
+
+# ============================================================
+# REPORT PAGE
+# ============================================================
+
+if page == "🚨 Report Problem":
+
+    st.title("🌆 CivicPulse AI")
+
+    st.subheader("Report a problem in your area")
+
+    st.write(
+        "Tell us what is happening and where. "
+        "CivicPulse will organize the report and look for repeated problems in the area."
     )
 
     st.divider()
-    st.caption("Built with Python • Streamlit • Scikit-learn • SQLite")
-    st.caption("ML: TF-IDF + Logistic Regression")
 
-
-# ------------------------------------------------------------
-# Report Problem
-# ------------------------------------------------------------
-if page == "🚨 Report Problem":
-    st.markdown(
-        """
-        <div class="hero">
-            <h1>🚨 Report a Civic Problem</h1>
-            <p>
-                Describe a local problem. CivicPulse AI will classify it,
-                estimate risk, compare it with previous reports, and look
-                for repeated local patterns.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.header("📍 Submit a Report")
 
     problem = st.text_area(
-        "Describe the problem",
+        "What is happening?",
         placeholder=(
-            "Example: There is a deep pothole near the metro station "
+            "Example: There is a large pothole near the metro station "
             "and vehicles are having difficulty passing."
         ),
-        height=130,
+        height=150
     )
 
     location = st.text_input(
-        "Location",
-        placeholder="Example: Sector 15, Gurugram",
+        "Where is it happening?",
+        placeholder="Example: Sector 56, Gurugram"
     )
 
-    st.info(
-        "💡 You do NOT need to select a category. "
-        "CivicPulse AI will predict it automatically."
-    )
+    st.caption("You do not need to choose a problem category. The system identifies it from your description.")
 
-    analyze = st.button(
-        "🔎 Analyze & Submit Report",
+    if st.button(
+        "Submit Report",
         type="primary",
-        use_container_width=True,
-    )
+        use_container_width=True
+    ):
 
-    if analyze:
         if not problem.strip():
-            st.error("Please describe the civic problem.")
+            st.warning("Please describe the problem.")
+
         elif not location.strip():
-            st.error("Please enter the location.")
+            st.warning("Please enter the location.")
+
         else:
-            category, confidence = predict_category(problem)
-            risk_score = calculate_risk(
-                problem,
-                category,
-                confidence,
-            )
-            severity = severity_from_risk(risk_score)
 
-            similar_reports = find_similar_reports(problem)
+            with st.spinner("Reviewing your report..."):
 
-            save_report(
-                problem,
-                location,
-                category,
-                severity,
-                risk_score,
-                confidence,
-            )
+                category, _ = predict_category(problem)
 
-            st.success("✅ Report analyzed and saved successfully!")
+                risk_score, severity = calculate_risk(
+                    problem,
+                    category
+                )
+
+                similar_reports = find_similar_reports(problem)
+
+                save_report(
+                    problem,
+                    location,
+                    category,
+                    severity,
+                    risk_score
+                )
+
+                # Load the updated database so the current report is included
+                # in the repeated-problem signal.
+                updated_reports = load_reports()
+
+            location_key = normalize_text(location)
+            same_area = updated_reports[
+                updated_reports["location"].map(normalize_text) == location_key
+            ]
+            same_problem = same_area[
+                same_area["category"] == category
+            ]
+            same_problem_count = len(same_problem)
+
+            st.success("Your report has been added to the community records.")
 
             st.divider()
 
-            st.header("🧠 AI Analysis")
+            st.header("What we found")
 
             col1, col2, col3 = st.columns(3)
 
             with col1:
-                st.caption("Detected Category")
-                st.subheader(category)
+                st.metric("Problem type", category)
 
             with col2:
-                st.caption("Risk Score")
-                st.subheader(f"{risk_score}/100")
-                st.progress(risk_score / 100)
+                st.metric("Priority", get_priority_label(severity))
 
             with col3:
-                st.caption("Severity")
-                if severity == "Critical":
-                    st.error(severity)
-                elif severity == "High":
-                    st.warning(severity)
-                elif severity == "Medium":
-                    st.info(severity)
-                else:
-                    st.success(severity)
+                st.metric("Reports in this area", same_problem_count)
 
-            st.write(f"**AI confidence:** {confidence:.1f}%")
+            st.write("**Why this priority?**")
+            st.write(get_priority_reason(category, severity))
 
             st.divider()
 
-            left, right = st.columns(2)
+            col1, col2 = st.columns(2)
 
-            with left:
-                st.subheader("🔎 Similar Reports")
+            with col1:
+                st.subheader("🔎 Related reports")
 
                 if similar_reports.empty:
-                    st.info("No similar previous reports found.")
-                else:
-                    st.write(
-                        f"Found **{len(similar_reports)}** similar report(s)."
-                    )
-
-                    for _, row in similar_reports.iterrows():
-                        st.write(
-                            f"• {row['problem']} — **{row['location']}**"
-                        )
-
-            with right:
-                st.subheader("🚨 Emerging Problem Signal")
-
-                local_reports = similar_reports[
-                    similar_reports["location"]
-                    .astype(str)
-                    .str.strip()
-                    .str.lower()
-                    == location.strip().lower()
-                ]
-
-                category_reports = local_reports[
-                    local_reports["category"].astype(str) == category
-                ]
-
-                category_count = len(category_reports)
-                local_count = len(local_reports)
-
-                if category_count >= 3:
-                    st.error(
-                        "HIGH ALERT — Repeated reports detected for "
-                        "the same problem in this location."
-                    )
-                    st.write(
-                        f"{category_count} similar {category} reports "
-                        "were found at this location."
-                    )
-                    st.write(
-                        "This pattern may indicate an emerging local "
-                        "problem that needs attention."
-                    )
-                elif category_count == 2:
-                    st.warning("WATCH — Repeated reports detected.")
-                    st.write(
-                        f"{category_count} similar reports for {category} "
-                        "were found at this location."
-                    )
-                    st.write(
-                        "Additional reports could confirm whether this "
-                        "is becoming a recurring local problem."
-                    )
-                elif local_count >= 1:
                     st.info(
-                        "EARLY SIGNAL — A related report exists in "
-                        "this location."
-                    )
-                    st.write(
-                        "The system found a related report at this "
-                        "location, but there is not enough repeated "
-                        "evidence for a hotspot yet."
+                        "No closely related reports were found yet. "
+                        "New reports may reveal a pattern over time."
                     )
                 else:
-                    st.success("NO EMERGING SIGNAL")
                     st.write(
-                        "Similar reports were found elsewhere, but no "
-                        "repeated problem was detected at this location."
+                        f"{len(similar_reports)} related report(s) were found in the community records."
+                    )
+                    st.caption(
+                        "These reports are used to identify recurring problems; they are not treated as proof that the reports are the same incident."
+                    )
+
+            with col2:
+                st.subheader("📍 Area signal")
+
+                if same_problem_count >= 3:
+                    st.error(
+                        f"Repeated problem detected — {same_problem_count} reports for {category} in this area."
+                    )
+                    st.write(
+                        "This is a strong recurring-report signal and may deserve local attention."
+                    )
+
+                elif same_problem_count == 2:
+                    st.warning(
+                        "Early recurring signal — 2 reports for this problem type were found in this area."
+                    )
+                    st.write(
+                        "More reports can help confirm whether this is becoming a recurring local issue."
+                    )
+
+                else:
+                    st.success("No repeated problem signal yet.")
+                    st.write(
+                        "This report is currently the only report for this problem type in this area."
                     )
 
             st.divider()
 
-            st.subheader("💡 AI Recommendation")
-
-            if risk_score >= 75:
-                st.error(
-                    "Immediate attention recommended. "
-                    "The combination of problem type and risk indicators "
-                    "suggests a high-priority issue."
-                )
-            elif risk_score >= 55:
-                st.warning(
-                    "This issue should be monitored closely and "
-                    "investigated if additional reports appear."
-                )
-            else:
-                st.info(
-                    "Monitor the issue. Additional community reports "
-                    "can help determine whether it is becoming widespread."
-                )
+            st.subheader("💡 What happens next?")
+            st.write(
+                "Your report is now part of the community dataset. "
+                "As more people report problems, CivicPulse can highlight repeated issues and areas that may need attention."
+            )
 
 
-# ------------------------------------------------------------
-# Community Dashboard
-# ------------------------------------------------------------
-else:
-    st.markdown(
-        """
-        <div class="hero">
-            <h1>📊 Community Problem Dashboard</h1>
-            <p>
-                Aggregated civic intelligence generated from submitted
-                community reports.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+# ============================================================
+# DASHBOARD
+# ============================================================
+
+elif page == "📊 Community Dashboard":
+
+    st.title("📊 Community Problem Dashboard")
+
+    st.write(
+        "A simple view of the problems people have reported and the areas where issues are recurring."
     )
 
     reports = load_reports()
 
     if reports.empty:
-        st.info("No reports have been submitted yet.")
+
+        st.info(
+            "No reports yet. Submit the first community report to start building local insights."
+        )
+
     else:
-        critical_count = int((reports["severity"] == "Critical").sum())
-        high_count = int((reports["severity"] == "High").sum())
-        average_risk = int(round(reports["risk_score"].mean()))
 
-        m1, m2, m3, m4 = st.columns(4)
+        st.subheader("🔎 Explore community reports")
 
-        with m1:
-            st.metric("Total Reports", len(reports))
+        filter_col1, filter_col2 = st.columns(2)
 
-        with m2:
-            st.metric("Critical Issues", critical_count)
+        # Clean area names for display and avoid duplicate entries caused by
+        # accidental spaces/capitalization differences in submitted reports.
+        area_map = {}
+        for raw_area in reports["location"].dropna().astype(str):
+            clean_area = raw_area.strip()
+            area_map.setdefault(normalize_text(clean_area), clean_area)
 
-        with m3:
-            st.metric("High-Risk Issues", high_count)
+        area_options = ["All areas"] + sorted(area_map.values(), key=str.lower)
 
-        with m4:
-            st.metric("Average Risk", f"{average_risk}/100")
+        category_map = {}
+        for raw_category in reports["category"].dropna().astype(str):
+            clean_category = raw_category.strip()
+            category_map.setdefault(normalize_text(clean_category), clean_category)
+
+        category_options = ["All problem types"] + sorted(
+            category_map.values(), key=str.lower
+        )
+
+        with filter_col1:
+            selected_area = st.selectbox(
+                "Area",
+                area_options
+            )
+
+        with filter_col2:
+            selected_category = st.selectbox(
+                "Problem type",
+                category_options
+            )
+
+        filtered_reports = reports.copy()
+
+        if selected_area != "All areas":
+            selected_area_key = normalize_text(selected_area)
+            filtered_reports = filtered_reports[
+                filtered_reports["location"].map(normalize_text) == selected_area_key
+            ]
+
+        if selected_category != "All problem types":
+            filtered_reports = filtered_reports[
+                filtered_reports["category"] == selected_category
+            ]
+
+        area_signals = get_area_signals(filtered_reports)
+
+        total_reports = len(filtered_reports)
+        repeated_problem_groups = len(area_signals)
+        areas_to_watch = area_signals["location"].nunique() if not area_signals.empty else 0
+        higher_priority = len(
+            filtered_reports[filtered_reports["severity"].isin(["High", "Critical"])]
+        )
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("Reports received", total_reports)
+
+        with col2:
+            st.metric("Repeated problems", repeated_problem_groups)
+
+        with col3:
+            st.metric("Areas to watch", areas_to_watch)
+
+        with col4:
+            st.metric("Higher-priority reports", higher_priority)
 
         st.divider()
 
-        chart1, chart2 = st.columns(2)
+        col1, col2 = st.columns(2)
 
-        with chart1:
-            st.subheader("📈 Reports by Category")
+        with col1:
+            st.subheader("📈 What people are reporting")
+
             category_counts = (
-                reports["category"]
+                filtered_reports["category"]
                 .value_counts()
-                .reindex(CATEGORIES, fill_value=0)
+                .rename_axis("Problem")
+                .to_frame("Reports")
             )
+
             st.bar_chart(category_counts)
 
-        with chart2:
-            st.subheader("🚨 Risk Distribution")
-            risk_counts = (
-                reports["severity"]
+        with col2:
+            st.subheader("🚨 Reports by priority")
+
+            priority_counts = (
+                filtered_reports["severity"]
+                .map(get_priority_label)
                 .value_counts()
-                .reindex(
-                    ["Critical", "High", "Medium", "Low"],
-                    fill_value=0,
-                )
-            )
-            st.bar_chart(risk_counts)
-
-        st.divider()
-
-        st.subheader("📍 Location Signals")
-
-        location_summary = (
-            reports.groupby(["location", "category"])
-            .size()
-            .reset_index(name="reports")
-            .sort_values("reports", ascending=False)
-        )
-
-        if not location_summary.empty:
-            st.dataframe(
-                location_summary.head(15),
-                use_container_width=True,
-                hide_index=True,
+                .reindex(["Normal", "Medium", "High", "Urgent"], fill_value=0)
+                .rename_axis("Priority")
+                .to_frame("Reports")
             )
 
-        st.divider()
-
-        st.subheader("🔥 Highest-Risk Problems")
-
-        highest_risk = reports.sort_values(
-            ["risk_score", "created_at"],
-            ascending=[False, False],
-        ).head(10)
-
-        st.dataframe(
-            highest_risk[
-                [
-                    "problem",
-                    "location",
-                    "category",
-                    "severity",
-                    "risk_score",
-                    "confidence",
-                    "created_at",
-                ]
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
+            st.bar_chart(priority_counts)
 
         st.divider()
 
-        # ----------------------------------------------------
-        # ML evaluation
-        # ----------------------------------------------------
-        st.header("🤖 ML Model Evaluation")
+        st.subheader("📍 Areas with repeated problems")
 
-        if evaluation is None:
-            st.warning(
-                "evaluation_data.csv was not found or has invalid columns."
+        if area_signals.empty:
+            st.info(
+                "No area has received multiple reports for the same problem type yet."
             )
         else:
-            e1, e2, e3 = st.columns(3)
-
-            with e1:
-                st.metric(
-                    "Evaluation Accuracy",
-                    f"{evaluation['accuracy'] * 100:.2f}%",
-                )
-
-            with e2:
-                st.metric(
-                    "Evaluation Samples",
-                    evaluation["samples"],
-                )
-
-            with e3:
-                st.metric(
-                    "Training Samples",
-                    len(training_data),
-                )
-
-            st.caption(
-                "The classifier is evaluated on a separate evaluation "
-                "dataset that was not used during model training."
-            )
-
-            metrics_display = evaluation["metrics"].copy()
-
-            for column in ["Precision", "Recall", "F1-Score"]:
-                metrics_display[column] = metrics_display[column].round(3)
-
+            display_signals = area_signals[
+                ["location", "category", "reports"]
+            ].copy()
+            display_signals.columns = [
+                "Area",
+                "Problem",
+                "Reports"
+            ]
             st.dataframe(
-                metrics_display,
+                display_signals.head(10),
                 use_container_width=True,
-                hide_index=True,
+                hide_index=True
             )
-
-            st.subheader("🧩 Confusion Matrix")
-
-            matrix_df = pd.DataFrame(
-                evaluation["matrix"],
-                index=CATEGORIES,
-                columns=CATEGORIES,
-            )
-
-            st.dataframe(
-                matrix_df,
-                use_container_width=True,
-            )
-
-            with st.expander("🔬 View evaluation predictions"):
-                st.dataframe(
-                    evaluation["predictions"],
-                    use_container_width=True,
-                    hide_index=True,
-                )
 
         st.divider()
 
-        st.subheader("🧠 About the AI")
+        st.subheader("⚠️ Problems that may need attention")
 
+        attention = filtered_reports[
+            filtered_reports["severity"].isin(["High", "Critical"])
+        ].sort_values(
+            ["risk_score", "created_at"],
+            ascending=[False, False]
+        ).head(10).copy()
+
+        if attention.empty:
+            st.success(
+                "No reports are currently marked High or Urgent."
+            )
+        else:
+            attention["Priority"] = attention["severity"].map(get_priority_label)
+            attention = attention[
+                ["problem", "location", "category", "Priority", "created_at"]
+            ]
+            attention.columns = [
+                "Reported problem",
+                "Area",
+                "Problem type",
+                "Priority",
+                "Reported at"
+            ]
+            st.dataframe(
+                attention,
+                use_container_width=True,
+                hide_index=True
+            )
+
+        st.divider()
+
+        st.subheader("🕒 Recent community reports")
+
+        recent = filtered_reports.head(10).copy()
+        recent = recent[
+            ["problem", "location", "category", "severity", "created_at"]
+        ]
+        recent["severity"] = recent["severity"].map(get_priority_label)
+        recent.columns = [
+            "Reported problem",
+            "Area",
+            "Problem type",
+            "Priority",
+            "Reported at"
+        ]
+
+        st.dataframe(
+            recent,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.divider()
+
+        st.subheader("💬 What CivicPulse does")
         st.write(
-            """
-            CivicPulse AI uses TF-IDF to convert civic problem descriptions
-            into numerical text features and Logistic Regression to classify
-            them into civic issue categories. Cosine similarity is used to
-            find related historical reports. Risk scoring combines detected
-            issue category, risk-related language, and model confidence.
-            """
+            "CivicPulse AI turns individual community reports into useful local insights. "
+            "It organizes reported problems, looks for repeated issues, and highlights areas where multiple reports may indicate a recurring concern."
         )
 
         st.caption(
-            "Current data is based on submitted reports and local project "
-            "datasets. It does not represent live government or external "
-            "civic data."
+            "Community signals are based on reports submitted to this application and should be treated as indicators, not official government assessments."
         )
